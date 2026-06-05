@@ -1,0 +1,6 @@
+google-genai
+chromadb
+streamlit
+pandas
+python-dotenv
+pysqlite3-binary
