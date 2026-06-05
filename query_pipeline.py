@@ -126,17 +126,29 @@ def execute_sql(sql_query):
         return f"❌ Unexpected Error: {e}"
 
 def ask_database(user_question):
-    """The master pipeline combining retrieval, generation, and execution."""
+    """The master pipeline combining retrieval, generation, and execution.
+    Includes fault-tolerant overrides for transient external API failures.
+    """
     print(f"\n--- Processing Question: '{user_question}' ---")
     
     # Step 1: Semantic Retrieval from ChromaDB
     print("⏳ Retrieving table blueprints from ChromaDB...")
     context = get_relevant_schemas(user_question)
     
-    # Step 2: Code Generation using Gemini
+    # Step 2: Code Generation using Gemini (With Fault Tolerance)
     print("🤖 Generating SQL query with Gemini...")
-    sql = generate_sql(user_question, context)
-    print(f"👉 Generated SQL:\n{sql}\n")
+    try:
+        sql = generate_sql(user_question, context)
+        print(f"👉 Generated SQL:\n{sql}\n")
+    except Exception as api_error:
+        # Catch Google API server drops gracefully without breaking the app runtime
+        print(f"❌ Gemini API Server Drop Intercepted: {api_error}")
+        error_message = (
+            "⚠️ AI Service Warning: The upstream Google Gemini API servers are currently "
+            "experiencing temporary server strain or a brief network hiccup. "
+            "Your database connection remains secure. Please wait a few seconds and try refreshing your query!"
+        )
+        return error_message, "-- API Server Temporary Disruption Fallback"
     
     # Step 3: Execution against SQLite
     print("📊 Executing query against olist.db...")
