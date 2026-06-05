@@ -36,13 +36,14 @@ Allowing an LLM to freely interface with a database poses critical vectors for S
 
 ```text
 olist-text-to-sql-ai/
-├── .gitignore              # Enforces local sandboxing (excludes large data/secret keys)
-├── README.md               # Professional project documentation
-├── app.py                  # Front-end Streamlit dashboard and dynamic UI visualizations
-├── convert_to_sqlite.py    # ETL pipeline normalizing raw flat CSV data into relational tables
-├── embed_schema.py         # Vector pipeline embedding database metadata into ChromaDB
-├── query_pipeline.py       # Core RAG routing engine & dual-layer security guardrails
-└── schema_docs.py          # Plain-English schema blueprints for vector ingestion
+├── .gitignore              # Intercepts local clutter and prevents secure credential leakage
+├── README.md               # Enterprise-grade technical documentation and architecture blueprints
+├── app.py                  # Front-end Streamlit dashboard and dynamic visualization layer
+├── convert_to_sqlite.py    # ETL engine normalizing raw data into relational SQLite schemas
+├── embed_schema.py         # Specialized script vectorizing metadata blueprints into ChromaDB
+├── query_pipeline.py       # Core LLM orchestration network handling RAG routing and security
+├── requirements.txt        # Managed dependency layer handling cloud server execution packages
+└── schema_docs.py          # Decoupled semantic context descriptions utilized for RAG lookups
 
 ```
 
