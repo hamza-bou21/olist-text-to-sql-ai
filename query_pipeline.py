@@ -2,6 +2,7 @@ import os
 import sqlite3
 import pandas as pd
 import chromadb
+from chromadb.errors import NotFoundError
 from google import genai
 from dotenv import load_dotenv
 
@@ -9,10 +10,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def get_relevant_schemas(user_question):
-    """Queries ChromaDB to find the tables most relevant to the user's question."""
+    """Queries ChromaDB to find the tables most relevant to the user's question.
+    Includes a self-healing fallback to initialize the collection if it doesn't exist.
+    """
     chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    collection = chroma_client.get_collection(name="olist_schema_collection")
     
+    try:
+        # Attempt to grab the existing collection
+        collection = chroma_client.get_collection(name="olist_schema_collection")
+    except (NotFoundError, ValueError, Exception):
+        # Fallback: Collection does not exist (Cloud environment cold-start init)
+        print("⚠️ ChromaDB collection not found on server. Initializing vector embeddings on-the-fly...")
+        collection = chroma_client.create_collection(name="olist_schema_collection")
+        
+        # Pull your raw schemas from schema_docs to build the collection dynamically
+        from schema_docs import OLIST_SCHEMAS
+        
+        for table_name, schema_text in OLIST_SCHEMAS.items():
+            collection.add(
+                documents=[schema_text],
+                metadatas=[{"table_name": table_name}],
+                ids=[table_name]
+            )
+        print("✅ ChromaDB collection initialized and populated successfully.")
+
     # Search ChromaDB for the top 3 most relevant table schemas
     results = collection.query(
         query_texts=[user_question],
