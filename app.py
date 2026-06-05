@@ -24,8 +24,8 @@ with st.sidebar:
     st.markdown("""
     This application leverages a modern RAG (Retrieval-Augmented Generation) pipeline to safely query database systems using natural language.
     
-    * **Vector Routing:** ChromaDB
-    * **LLM Core:** Gemini 2.5 Flash
+    * **Vector Routing:** ChromaDB (Gemini Embeddings)
+    * **LLM Core:** Groq (Llama 3.3 70B)
     * **SQL Database:** SQLite
     """)
     st.divider()

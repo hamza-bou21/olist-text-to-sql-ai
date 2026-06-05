@@ -5,6 +5,7 @@ import chromadb
 from chromadb.errors import NotFoundError
 from google import genai
 from google.genai import types
+from groq import Groq  # Imported Groq SDK
 from dotenv import load_dotenv
 from schema_docs import TABLE_SCHEMAS
 
@@ -13,14 +14,14 @@ load_dotenv()
 
 def get_gemini_embedding(text):
     """Calls Google's cloud API to translate text into a mathematical vector.
-    This eliminates the need to download or run an AI model locally in RAM!
+    Kept here because Groq doesn't provide an embedding model endpoint.
+    This keeps your local RAM 100% free of heavy machine learning models!
     """
     client = genai.Client()
     response = client.models.embed_content(
         model="gemini-embedding-001",  # Google's standard high-performance text embedding model
         contents=[text]
     )
-    # Extract and return the clean list of floating-point numbers (the vector)
     return response.embeddings[0].values
 
 def get_relevant_schemas(user_question):
@@ -43,7 +44,7 @@ def get_relevant_schemas(user_question):
             
         collection = chroma_client.create_collection(name="olist_cloud_collection")
         
-        # Loop through your 5 true tables from schema_docs.py
+        # Loop through your tables from schema_docs.py
         for table_name, schema_text in TABLE_SCHEMAS.items():
             # Calculate the math vector using Google's cloud server
             table_vector = get_gemini_embedding(str(schema_text))
@@ -51,13 +52,13 @@ def get_relevant_schemas(user_question):
             # Pass the text AND the cloud-calculated vector directly to ChromaDB
             collection.add(
                 documents=[str(schema_text)],
-                embeddings=[table_vector],  # Explicitly providing the vector stops local downloads!
+                embeddings=[table_vector],  
                 metadatas=[{"table_name": table_name}],
                 ids=[table_name]
             )
         print("✅ ChromaDB initialized safely using pure API cloud embeddings!")
 
-    # 1. Turn the user's plain English question into a vector using the API
+    # 1. Turn the user's plain English question into a vector using Gemini API
     question_vector = get_gemini_embedding(user_question)
     
     # 2. Tell ChromaDB to search using that cloud-calculated vector list
@@ -75,8 +76,9 @@ def get_relevant_schemas(user_question):
     return schemas_context
 
 def generate_sql(user_question, schemas_context):
-    """Uses Gemini to translate the plain English question into structured SQL."""
-    client = genai.Client()
+    """Uses Groq to translate the plain English question into structured SQL."""
+    # Automatically initializes using GROQ_API_KEY from environment variables
+    client = Groq()
     
     system_prompt = (
         "You are an expert data analyst and SQLite database administrator.\n"
@@ -96,13 +98,20 @@ def generate_sql(user_question, schemas_context):
     SQL Query:
     """
     
-    response = client.models.generate_content(
-        model='gemini-1.5-flash',
-        contents=user_prompt,
-        config=types.GenerateContentConfig(system_instruction=system_prompt)
+    # Using Groq's Chat Completion with Llama 3.3 (incredible for code and reasoning tasks)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.0  # Kept strict/deterministic for raw code generation
     )
     
-    sql_query = response.text.strip().replace("```sql", "").replace("```", "")
+    raw_output = response.choices[0].message.content.strip()
+    
+    # Post-processing cleanup in case the LLM accidentally wraps code in markdown blocks
+    sql_query = raw_output.replace("```sql", "").replace("```", "").strip()
     return sql_query
 
 def execute_sql(sql_query):
@@ -137,7 +146,7 @@ def ask_database(user_question):
     # Step 1: Semantic Retrieval from ChromaDB (Using Cloud Embeddings)
     context = get_relevant_schemas(user_question)
     
-    # Step 2: Code Generation using Gemini
+    # Step 2: Code Generation using Groq
     try:
         sql = generate_sql(user_question, context)
         print(f"👉 Generated SQL:\n{sql}\n")
