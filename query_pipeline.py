@@ -4,49 +4,65 @@ import pandas as pd
 import chromadb
 from chromadb.errors import NotFoundError
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
+from schema_docs import TABLE_SCHEMAS
 
 # Load environment variables (.env file)
 load_dotenv()
 
+def get_gemini_embedding(text):
+    """Calls Google's cloud API to translate text into a mathematical vector.
+    This eliminates the need to download or run an AI model locally in RAM!
+    """
+    client = genai.Client()
+    response = client.models.embed_content(
+        model="gemini-embedding-001",  # Google's standard high-performance text embedding model
+        contents=[text]
+    )
+    # Extract and return the clean list of floating-point numbers (the vector)
+    return response.embeddings[0].values
+
 def get_relevant_schemas(user_question):
     """Queries ChromaDB to find the tables most relevant to the user's question.
-    Includes an automated self-healing cache reset that syncs with TABLE_SCHEMAS.
+    Uses cloud-offloaded vectors to stay 100% stable under cloud memory constraints.
     """
     chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    from schema_docs import TABLE_SCHEMAS
     
     try:
-        # 1. Attempt to grab the existing collection
-        collection = chroma_client.get_collection(name="olist_schema_collection")
-        
-        # Smart Cache Check: If the server's collection size doesn't match our 5 true tables,
-        # it means it contains old/broken placeholders. Force a reset!
+        collection = chroma_client.get_collection(name="olist_cloud_collection")
         if collection.count() != len(TABLE_SCHEMAS):
-            chroma_client.delete_collection("olist_schema_collection")
+            chroma_client.delete_collection("olist_cloud_collection")
             raise NotFoundError
-            
     except (NotFoundError, ValueError, Exception):
-        # 2. Fallback: Rebuild the vector index with your true database layout
-        print("⚠️ ChromaDB cache outdated or missing. Initializing true layouts from TABLE_SCHEMAS...")
+        print("⚠️ ChromaDB cache empty or out of sync. Initializing cloud-offloaded embeddings...")
         try:
-            chroma_client.delete_collection("olist_schema_collection")
+            chroma_client.delete_collection("olist_cloud_collection")
         except Exception:
             pass
             
-        collection = chroma_client.create_collection(name="olist_schema_collection")
+        collection = chroma_client.create_collection(name="olist_cloud_collection")
         
+        # Loop through your 5 true tables from schema_docs.py
         for table_name, schema_text in TABLE_SCHEMAS.items():
+            # Calculate the math vector using Google's cloud server
+            table_vector = get_gemini_embedding(str(schema_text))
+            
+            # Pass the text AND the cloud-calculated vector directly to ChromaDB
             collection.add(
                 documents=[str(schema_text)],
+                embeddings=[table_vector],  # Explicitly providing the vector stops local downloads!
                 metadatas=[{"table_name": table_name}],
                 ids=[table_name]
             )
-        print("✅ ChromaDB collection initialized with your actual 5-table schema design!")
+        print("✅ ChromaDB initialized safely using pure API cloud embeddings!")
 
-    # Search ChromaDB for the top 3 most relevant table schemas
+    # 1. Turn the user's plain English question into a vector using the API
+    question_vector = get_gemini_embedding(user_question)
+    
+    # 2. Tell ChromaDB to search using that cloud-calculated vector list
     results = collection.query(
-        query_texts=[user_question],
+        query_embeddings=[question_vector],
         n_results=3
     )
     
@@ -62,7 +78,6 @@ def generate_sql(user_question, schemas_context):
     """Uses Gemini to translate the plain English question into structured SQL."""
     client = genai.Client()
     
-    # The system prompt instructions that govern how Gemini writes the code
     system_prompt = (
         "You are an expert data analyst and SQLite database administrator.\n"
         "Your task is to convert a user's natural language question into a single, syntactically correct SQLite query.\n"
@@ -84,17 +99,14 @@ def generate_sql(user_question, schemas_context):
     response = client.models.generate_content(
         model='gemini-2.5-flash',
         contents=user_prompt,
-        config={'system_instruction': system_prompt}
+        config=types.GenerateContentConfig(system_instruction=system_prompt)
     )
     
-    # Clean up any unexpected whitespaces or markdown blocks if the LLM slips up
     sql_query = response.text.strip().replace("```sql", "").replace("```", "")
     return sql_query
 
 def execute_sql(sql_query):
     """Executes the generated SQL query against the local SQLite database in STRICT READ-ONLY mode."""
-    
-    # --- LAYER 1: Text-Level Guardrails ---
     forbidden_keywords = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "TRUNCATE", "REPLACE"]
     query_upper = sql_query.upper()
     
@@ -102,66 +114,41 @@ def execute_sql(sql_query):
         if keyword in query_upper:
             return f"❌ Security Exception: Generated query attempted a forbidden action ({keyword})."
             
-    # --- LAYER 2: Database-Level Read-Only Enforcement ---
     try:
-        # Enforce absolute path routing to guarantee compatibility with Linux cloud servers
         base_dir = os.path.dirname(os.path.abspath(__file__))
         db_path = os.path.join(base_dir, "olist.db")
-        
-        # Using a URI connection string with '?mode=ro' forces SQLite to reject any write operations
         db_uri = f"file:{db_path}?mode=ro"
-        conn = sqlite3.connect(db_uri, uri=True)
         
-        # Load the SQL query results into a Pandas DataFrame
+        conn = sqlite3.connect(db_uri, uri=True)
         df = pd.read_sql_query(sql_query, conn)
         conn.close()
         return df
-        
     except sqlite3.OperationalError as e:
         if "attempt to write a readonly database" in str(e):
             return "❌ Security Exception: Database is locked in read-only mode. Write actions are prohibited."
         return f"❌ SQL Operational Error: {e}"
-        
     except Exception as e:
         return f"❌ Unexpected Error: {e}"
 
 def ask_database(user_question):
-    """The master pipeline combining retrieval, generation, and execution.
-    Includes fault-tolerant overrides for transient external API failures.
-    """
+    """The master pipeline combining retrieval, generation, and execution."""
     print(f"\n--- Processing Question: '{user_question}' ---")
     
-    # Step 1: Semantic Retrieval from ChromaDB
-    print("⏳ Retrieving table blueprints from ChromaDB...")
+    # Step 1: Semantic Retrieval from ChromaDB (Using Cloud Embeddings)
     context = get_relevant_schemas(user_question)
     
-    # Step 2: Code Generation using Gemini (With Fault Tolerance)
-    print("🤖 Generating SQL query with Gemini...")
+    # Step 2: Code Generation using Gemini
     try:
         sql = generate_sql(user_question, context)
         print(f"👉 Generated SQL:\n{sql}\n")
     except Exception as api_error:
-        # Catch Google API server drops gracefully without breaking the app runtime
-        print(f"❌ Gemini API Server Drop Intercepted: {api_error}")
-        error_message = (
-            "⚠️ AI Service Warning: The upstream Google Gemini API servers are currently "
-            "experiencing temporary server strain or a brief network hiccup. "
-            "Your database connection remains secure. Please wait a few seconds and try refreshing your query!"
-        )
-        return error_message, "-- API Server Temporary Disruption Fallback"
-    
+        return f"❌ AI Service Error: {api_error}", "-- API Error Fallback"
+        
     # Step 3: Execution against SQLite
-    print("📊 Executing query against olist.db...")
     result = execute_sql(sql)
     return result, sql
 
-# Test harness execution block
 if __name__ == "__main__":
     test_question = "What are the top 5 states with the highest total sales volume?"
     df_result, generated_sql = ask_database(test_question)
-    
-    print("\n🤖 Generated SQL Query:")
-    print(generated_sql)
-    
-    print("\n🏆 Results Table:")
     print(df_result)

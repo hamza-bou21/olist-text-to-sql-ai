@@ -1,7 +1,11 @@
-
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+try:
+    import pysqlite3
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    # If running locally on Windows where pysqlite3 doesn't exist,
+    # skip it cleanly and use the built-in system tools!
+    pass
 
 import streamlit as st
 import pandas as pd
