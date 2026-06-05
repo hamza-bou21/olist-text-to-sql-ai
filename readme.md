@@ -1,6 +1,8 @@
 
 # 📊 Olist E-Commerce AI Data Assistant
 
+🔗 **[Live Demo → olist-text-to-sql-ai.streamlit.app](https://olist-text-to-sql-ai.streamlit.app/)**
+
 An enterprise-grade, Generative AI-powered Text-to-SQL application that translates natural language business questions into optimized, syntactically correct SQLite queries. Built using a specialized **Retrieval-Augmented Generation (RAG)** architecture, this system features a deterministic Defense-in-Depth security framework that intercepts malicious prompt injections and prevents database tampering.
 
 ---
