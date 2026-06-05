@@ -1,0 +1,14 @@
+# Sensitive Environment Variables (DO NOT ACCESS/UPLOAD)
+.env
+
+# Local Databases and Vector Storage (Too large for Git)
+olist.db
+olist_clean.csv
+chroma_db/
+
+# Python caching systems
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+env/
