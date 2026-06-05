@@ -11,28 +11,38 @@ load_dotenv()
 
 def get_relevant_schemas(user_question):
     """Queries ChromaDB to find the tables most relevant to the user's question.
-    Includes a self-healing fallback to initialize the collection if it doesn't exist.
+    Includes an automated self-healing cache reset that syncs with TABLE_SCHEMAS.
     """
     chroma_client = chromadb.PersistentClient(path="./chroma_db")
+    from schema_docs import TABLE_SCHEMAS
     
     try:
-        # Attempt to grab the existing collection
+        # 1. Attempt to grab the existing collection
         collection = chroma_client.get_collection(name="olist_schema_collection")
+        
+        # Smart Cache Check: If the server's collection size doesn't match our 5 true tables,
+        # it means it contains old/broken placeholders. Force a reset!
+        if collection.count() != len(TABLE_SCHEMAS):
+            chroma_client.delete_collection("olist_schema_collection")
+            raise NotFoundError
+            
     except (NotFoundError, ValueError, Exception):
-        # Fallback: Collection does not exist (Cloud environment cold-start init)
-        print("⚠️ ChromaDB collection not found on server. Initializing vector embeddings on-the-fly...")
+        # 2. Fallback: Rebuild the vector index with your true database layout
+        print("⚠️ ChromaDB cache outdated or missing. Initializing true layouts from TABLE_SCHEMAS...")
+        try:
+            chroma_client.delete_collection("olist_schema_collection")
+        except Exception:
+            pass
+            
         collection = chroma_client.create_collection(name="olist_schema_collection")
         
-        # Pull your raw schemas from schema_docs to build the collection dynamically
-        from schema_docs import OLIST_SCHEMAS
-        
-        for table_name, schema_text in OLIST_SCHEMAS.items():
+        for table_name, schema_text in TABLE_SCHEMAS.items():
             collection.add(
-                documents=[schema_text],
+                documents=[str(schema_text)],
                 metadatas=[{"table_name": table_name}],
                 ids=[table_name]
             )
-        print("✅ ChromaDB collection initialized and populated successfully.")
+        print("✅ ChromaDB collection initialized with your actual 5-table schema design!")
 
     # Search ChromaDB for the top 3 most relevant table schemas
     results = collection.query(
@@ -89,14 +99,17 @@ def execute_sql(sql_query):
     query_upper = sql_query.upper()
     
     for keyword in forbidden_keywords:
-        # Quick check to ensure the keyword isn't smuggled inside the query text
         if keyword in query_upper:
             return f"❌ Security Exception: Generated query attempted a forbidden action ({keyword})."
             
     # --- LAYER 2: Database-Level Read-Only Enforcement ---
     try:
+        # Enforce absolute path routing to guarantee compatibility with Linux cloud servers
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(base_dir, "olist.db")
+        
         # Using a URI connection string with '?mode=ro' forces SQLite to reject any write operations
-        db_uri = "file:olist.db?mode=ro"
+        db_uri = f"file:{db_path}?mode=ro"
         conn = sqlite3.connect(db_uri, uri=True)
         
         # Load the SQL query results into a Pandas DataFrame
@@ -130,12 +143,9 @@ def ask_database(user_question):
     result = execute_sql(sql)
     return result, sql
 
-# Update the test harness at the very bottom of query_pipeline.py
+# Test harness execution block
 if __name__ == "__main__":
-    # A healthy, normal question to test your backend locally
     test_question = "What are the top 5 states with the highest total sales volume?"
-    
-    # Correctly unpack BOTH values from the tuple we just created
     df_result, generated_sql = ask_database(test_question)
     
     print("\n🤖 Generated SQL Query:")
