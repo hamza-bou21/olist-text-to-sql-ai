@@ -2,7 +2,6 @@
 .env
 
 # Local Databases and Vector Storage (Too large for Git)
-olist.db
 olist_clean.csv
 chroma_db/
 
